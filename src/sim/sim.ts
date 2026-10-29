@@ -86,7 +86,8 @@ export class Sim {
     const leg = plan.legs[plan.activeIdx];
     const s = this.ac.s;
     const nearDest = plan.dest ? distance({ lat: s.lat, lon: s.lon }, plan.destRwy ?? plan.dest) : 999;
-    const inApproach = !s.onGround && (fms.phase === 'APPROACH' || leg?.seg === 'APP' || (nearDest < 12 && s.alt - (plan.dest?.elev ?? 0) < 4000 && fms.phase !== 'CLIMB' && fms.phase !== 'TAKEOFF'));
+    const missed = plan.missedActive || this.ac.fcp.vert === 'GA';
+    const inApproach = !s.onGround && !missed && (fms.phase === 'APPROACH' || leg?.seg === 'APP' || (nearDest < 12 && s.alt - (plan.dest?.elev ?? 0) < 4000 && fms.phase !== 'CLIMB' && fms.phase !== 'TAKEOFF'));
     return {
       lnav: fms.guidance.lnav,
       vnav: fms.guidance.vnav,
@@ -99,6 +100,7 @@ export class Sim {
       inApproach,
       nearDest,
       fmsValid: fms.posInit && plan.legs.length > 1,
+      missed,
     };
   }
 

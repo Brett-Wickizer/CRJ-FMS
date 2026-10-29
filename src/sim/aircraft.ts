@@ -99,6 +99,8 @@ export interface SimInputs {
   inApproach: boolean;
   nearDest: number; // NM
   fmsValid: boolean;
+  /** Missed approach in progress: no approach re-arming or landing configuration. */
+  missed: boolean;
 }
 
 const VFE: Record<number, number> = CRJ700.vfe;
@@ -379,8 +381,8 @@ export class Aircraft {
       }
       case 'VPATH': {
         vsCmd = inp.vnav.vsCmd ?? -1000;
-        // Do not descend through the altitude preselector
-        if (s.alt + (vsCmd / 60) * 6 < f.altSel && vsCmd < 0) {
+        // Do not descend through the altitude preselector (except on final approach)
+        if (!inp.vnav.finalApp && s.alt + (vsCmd / 60) * 6 < f.altSel && vsCmd < 0) {
           f.vert = 'ALTS';
           this.captureVs = s.vs;
         }
@@ -457,6 +459,7 @@ export class Aircraft {
     }
     if (v.phase === 'CLB' || v.phase === 'PRE') return Math.min(v.tgtAlt || f.altSel, f.altSel);
     if (v.phase === 'CRZ') return Math.min(v.tgtAlt, f.altSel > s.alt + 100 ? v.tgtAlt : f.altSel);
+    if (v.finalApp) return v.tgtAlt;
     return Math.max(v.tgtAlt, f.altSel);
   }
 
@@ -476,7 +479,7 @@ export class Aircraft {
     if (level) {
       const held = this.capTarget ?? target;
       if (v.phase === 'CLB' && target > held + 50) { f.vert = 'VFLC'; this.capTarget = null; return; }
-      if (desc && f.altSel < s.alt - 200 && (target < s.alt - 100 || this.belowPathHold != null)) {
+      if (desc && (f.altSel < s.alt - 200 || v.finalApp) && (target < s.alt - 100 || this.belowPathHold != null || v.finalApp)) {
         if (v.pathAlt == null || s.alt - v.pathAlt > 300) { f.vert = 'VFLC'; this.belowPathHold = null; this.capTarget = null; }
         else if (s.alt - v.pathAlt > -100) { f.vert = 'VPATH'; this.belowPathHold = null; this.capTarget = null; }
         else if (this.belowPathHold == null) this.belowPathHold = Math.round(s.alt / 100) * 100; // wait for the path
@@ -496,8 +499,8 @@ export class Aircraft {
     }
     if (f.vert === 'VPATH') {
       if (v.pathAlt == null) { this.belowPathHold = Math.round(s.alt / 100) * 100; f.vert = 'VALTS'; return; }
-      if (s.alt - v.pathAlt > 600) f.vert = 'VFLC';
-      if (Math.abs(d) < Math.abs(s.vs) / 10 + 60 && d > -10) capture(target === f.altSel ? 'ALTS' : 'VALTS');
+      if (s.alt - v.pathAlt > 600 && !v.finalApp) f.vert = 'VFLC';
+      if (!v.finalApp && Math.abs(d) < Math.abs(s.vs) / 10 + 60 && d > -10) capture(target === f.altSel ? 'ALTS' : 'VALTS');
       return;
     }
     if (['FLC', 'VS', 'PITCH'].includes(f.vert)) f.vert = 'VFLC';
@@ -619,8 +622,15 @@ export class Aircraft {
       else if (s.flapSel === 8 && s.ias > inp.v2 + 22) s.flapSel = 1;
       else if (s.flapSel === 1 && s.ias > inp.v2 + 38) s.flapSel = 0;
     }
+    // Climb-out after a go-around: clean up like a departure
+    if (inp.missed && s.vs > 300 && agl > 400) {
+      if (s.gearDown) { s.gearDown = false; this.events.push('GEAR UP'); }
+      if (s.flapSel > 8) s.flapSel = 8;
+      if (agl > 1000 && s.flapSel === 8 && s.ias > inp.vref + 25) s.flapSel = 1;
+      if (agl > 1000 && s.flapSel === 1 && s.ias > inp.vref + 45) s.flapSel = 0;
+    }
     // Approach configuration
-    if (inp.inApproach || f.vert === 'GS' || f.lat === 'LOC') {
+    if (!inp.missed && (inp.inApproach || f.vert === 'GS' || f.lat === 'LOC')) {
       const thr = inp.ils?.thrDist ?? inp.nearDest;
       if (s.flapSel < 1 && s.ias < 225 && thr < 25) s.flapSel = 1;
       if (s.flapSel < 8 && s.ias < 215 && thr < 16) s.flapSel = 8;
@@ -629,7 +639,7 @@ export class Aircraft {
       if (s.flapSel < 30 && s.gearDown && s.ias < 182 && thr < 8) s.flapSel = 30;
       if (s.flapSel < 45 && s.gearDown && s.ias < 168 && thr < 6.5) s.flapSel = 45;
       // arm the approach automatically when an ILS is tuned and an approach is active
-      if (!f.appr && inp.ils && inp.ils.locValid && thr < 25 && agl < 9000) { f.appr = true; this.events.push('APPR ARMED'); }
+      if (!f.appr && !inp.missed && f.vert !== 'GA' && inp.ils && inp.ils.locValid && thr < 25 && agl < 9000) { f.appr = true; this.events.push('APPR ARMED'); }
     }
     // Speed brakes: too fast in descent or high on path
     const tooFast = s.ias > s.tgtIas + 12 && s.vs < -300;

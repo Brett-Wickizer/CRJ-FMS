@@ -106,6 +106,14 @@ export function resetFlight() {
 /** Virtual ATC: altitude clearances so a flight can be flown hands-off. */
 let atcPhase = 0;
 export function atcUpdate() {
+  // Auto crew: go around when the MAP was passed without landing
+  if (fms.guidance.missedAuto && sim.ac.fcp.autoCrew && !sim.ac.s.onGround) {
+    fms.guidance.missedAuto = false;
+    const ma = fms.active.legs.slice(fms.active.activeIdx).find((l) => l.alt);
+    if (ma?.alt) sim.ac.fcp.altSel = ma.alt.a1;
+    sim.ac.toga(sim.inputs);
+    toast('GO AROUND - MISSED APPROACH');
+  }
   if (!settings.atcAlt) return;
   const s = sim.ac.s, f = sim.ac.fcp;
   const crz = fms.perf.crzAlt;
@@ -124,8 +132,8 @@ export function atcUpdate() {
     if (f.altSel > t) { f.altSel = t; toast(`ATC: DESCEND VIA, ALT ${t}`); }
     atcPhase = 2;
   }
-  // Missed approach altitude once established on the glideslope
-  if (atcPhase === 2 && f.vert === 'GS') {
+  // Missed approach altitude once established on the glideslope or final path
+  if (atcPhase === 2 && (f.vert === 'GS' || fms.guidance.vnav.finalApp)) {
     const ma = fms.active.legs.find((l) => l.seg === 'MAP' && l.alt);
     if (ma?.alt) f.altSel = ma.alt.a1;
     atcPhase = 3;

@@ -59,9 +59,11 @@ export interface VnavOut {
   useMach: boolean;
   vdev: number | null;
   todDist: number | null;
+  /** On the final approach segment (past the FAF): the path ignores ALT SEL. */
+  finalApp: boolean;
 }
 
-type HoldPhase = 'ENTRY_DIRECT' | 'TEARDROP' | 'PARALLEL_OUT' | 'PARALLEL_BACK' | 'TURN1' | 'OUTBOUND' | 'TURN2' | 'INBOUND';
+type HoldPhase = 'ENTRY_DIRECT' | 'TEARDROP' | 'TD_TURN' | 'PARALLEL_OUT' | 'PARALLEL_BACK' | 'TURN1' | 'OUTBOUND' | 'TURN2' | 'INBOUND';
 
 interface HoldRt {
   uid: number;
@@ -76,7 +78,7 @@ interface HoldRt {
 export class Guidance {
   lnav: LnavOut = this.emptyLnav();
   vnav: VnavOut = {
-    valid: false, phase: 'PRE', tgtAlt: 0, pathAlt: null, pathAngle: 3, vsCmd: null, tgtIas: 0, tgtMach: 0, useMach: false, vdev: null, todDist: null,
+    valid: false, phase: 'PRE', tgtAlt: 0, pathAlt: null, pathAngle: 3, vsCmd: null, tgtIas: 0, tgtMach: 0, useMach: false, vdev: null, todDist: null, finalApp: false,
   };
   private segIdx = 0;
   private segLegUid = -1;
@@ -86,6 +88,8 @@ export class Guidance {
   /** Distance travelled since the last prediction (for path interpolation). */
   traveledSincePred = 0;
   goAround = false;
+  /** Set when the MAP was passed in flight (crew should go around). */
+  missedAuto = false;
   /** Fly-by turn arc being flown onto the active leg. */
   private trans: { uid: number; c: LatLon; r: number; dir: 1 | -1; outCrs: number } | null = null;
   /** Descent speed limit from speed constraints already crossed. */
@@ -102,6 +106,7 @@ export class Guidance {
     this.goAround = false;
     this.trans = null;
     this.desSpdCap = 999;
+    this.missedAuto = false;
   }
 
   /** Remaining distance on the active leg. */
@@ -247,9 +252,14 @@ export class Guidance {
           ta = turnAnticipation(geo.crsOut, nc, ac.gs, planBank(ac.alt));
           if (isHold(next)) ta = 0;
         }
-        // Do not sequence past the MAP unless going around
+        // Do not sequence past the MAP unless going around (or passed it airborne)
         if (leg.map && !this.goAround && !plan.missedActive) {
           seq = false;
+          if (remaining <= 0.001 && prog.along > segLength(seg) + 0.5) {
+            this.goAround = true;
+            seq = true;
+            this.missedAuto = true;
+          }
           break;
         }
         if (remaining <= Math.max(ta, 0.05)) {
@@ -356,7 +366,14 @@ export class Guidance {
         out.dtk = hdg;
         out.trkCmd = hdg;
         out.hdgLeg = true;
-        if (distance(h.phaseStart, ac.pos) >= Math.max(L, 2.5 * R)) this.setPhase(ac, 'TURN2');
+        if (distance(h.phaseStart, ac.pos) >= Math.max(L, 1.6 * R)) this.setPhase(ac, 'TD_TURN');
+        break;
+      }
+      case 'TD_TURN': {
+        // Turn in the holding direction to intercept the inbound course
+        steerLine(i1, inb);
+        out.turnDir = s > 0 ? 'R' : 'L';
+        if (Math.abs(angDiff(ac.trk, inb)) < 45) this.setPhase(ac, 'INBOUND');
         break;
       }
       case 'PARALLEL_OUT': {
@@ -430,8 +447,25 @@ export class Guidance {
 
   // -------------------------------------------------------------------------
   updateVnav(plan: FlightPlan, ac: AcState, pred: Predictions | null, perf: PerfParams, flightPhase: string): void {
-    const v: VnavOut = { valid: false, phase: 'PRE', tgtAlt: perf.crzAlt, pathAlt: null, pathAngle: perf.vpa, vsCmd: null, tgtIas: 250, tgtMach: perf.clbMach, useMach: false, vdev: null, todDist: null };
+    const v: VnavOut = { valid: false, phase: 'PRE', tgtAlt: perf.crzAlt, pathAlt: null, pathAngle: perf.vpa, vsCmd: null, tgtIas: 250, tgtMach: perf.clbMach, useMach: false, vdev: null, todDist: null, finalApp: false };
     const leg = plan.legs[plan.activeIdx];
+    if (leg) v.finalApp = leg.seg === 'APP' && !plan.missedActive && (this.pastFaf(plan) || (leg.map === true && leg.vpa != null));
+    // Final segment to the runway: path straight from the threshold crossing height
+    const rwy = leg?.map && leg.fix?.rwy ? leg.fix.rwy : null;
+    if (v.finalApp && rwy && leg.fix && (!pred || !pred.valid || this.lnav.dtg < 1.5)) {
+      const ang = Math.abs(leg.vpa ?? perf.vpa) || 3;
+      const d = distance(ac.pos, leg.fix);
+      v.valid = true;
+      v.phase = 'APP';
+      v.pathAngle = ang;
+      v.pathAlt = rwy.elev + (rwy.tch || 50) + Math.tan(ang * D2R) * d * 6076.12;
+      v.vdev = ac.alt - v.pathAlt;
+      v.vsCmd = clamp(-ac.gs * 101.27 * Math.tan(ang * D2R) - clamp(v.vdev * 2.2, -800, 800), -2000, 0);
+      v.tgtAlt = rwy.elev;
+      v.tgtIas = perf.vapp;
+      this.vnav = v;
+      return;
+    }
     if (!pred || !pred.valid || !leg) { this.vnav = v; return; }
     v.valid = true;
     const s = this.traveledSincePred;
@@ -439,7 +473,7 @@ export class Guidance {
     v.todDist = todDist;
     const inApp = leg.seg === 'APP' || leg.seg === 'MAP';
     if (ac.onGround && flightPhase !== 'TAKEOFF') v.phase = 'PRE';
-    else if (flightPhase === 'TAKEOFF' || flightPhase === 'CLIMB') v.phase = 'CLB';
+    else if (flightPhase === 'TAKEOFF' || flightPhase === 'CLIMB' || plan.missedActive) v.phase = 'CLB';
     else if (flightPhase === 'CRUISE') v.phase = 'CRZ';
     else v.phase = inApp ? 'APP' : 'DES';
 
@@ -458,7 +492,15 @@ export class Guidance {
         if (nextFloor != null) break;
       }
     }
-    if (v.phase === 'CLB' || v.phase === 'PRE') {
+    if (plan.missedActive) {
+      // Missed approach: climb to the highest published missed approach altitude
+      let ma = 0;
+      for (let i = plan.activeIdx; i < plan.legs.length; i++) {
+        const l = plan.legs[i];
+        if (l.seg === 'MAP' && l.alt) ma = Math.max(ma, l.alt.a1);
+      }
+      v.tgtAlt = ma || (plan.dest?.elev ?? 0) + 3000;
+    } else if (v.phase === 'CLB' || v.phase === 'PRE') {
       v.tgtAlt = Math.min(perf.crzAlt || 41000, nextCap ?? 99999);
     } else if (v.phase === 'CRZ') {
       v.tgtAlt = perf.crzAlt;
@@ -507,6 +549,12 @@ export class Guidance {
       if (climbing || (this.lnav.valid && this.lnav.dtg <= decelNm)) ias = Math.min(ias, leg.spd.kt);
     }
     if (useMach && casToMach(ias, ac.alt) < mach - 0.005) useMach = false;
+    // Maximum holding speed in or approaching a hold
+    const holdLeg = isHold(leg) ? leg : plan.legs[plan.activeIdx + 1] && isHold(plan.legs[plan.activeIdx + 1]) && this.lnav.dtg < 15 ? plan.legs[plan.activeIdx + 1] : null;
+    if (holdLeg) {
+      const hs = holdLeg.hold?.spd ?? (ac.alt <= 6000 ? 200 : ac.alt <= 14000 ? 230 : 265);
+      if (ias > hs || useMach) { ias = Math.min(ias, hs); useMach = false; }
+    }
     if (plan.missedActive || this.goAround) { ias = Math.max(perf.vapp + 20, 180); useMach = false; }
     v.tgtIas = Math.round(ias);
     v.tgtMach = mach;
