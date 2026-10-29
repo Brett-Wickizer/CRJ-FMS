@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#111316" />
+    <meta name="description" content="CRJ700 Collins FMS-4200 CDU simulator with real FAA navigation data, LNAV/VNAV flight simulation, PFD and MFD." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23101214'/%3E%3Crect x='10' y='10' width='44' height='30' rx='3' fill='%23000' stroke='%23444' stroke-width='2'/%3E%3Ctext x='14' y='24' font-family='monospace' font-size='9' fill='%2335f04a'%3EFPLN%3C/text%3E%3Ctext x='14' y='35' font-family='monospace' font-size='9' fill='%23ff4cf0'%3EKDEN%3C/text%3E%3Crect x='10' y='45' width='9' height='7' rx='1.5' fill='%23333'/%3E%3Crect x='22' y='45' width='9' height='7' rx='1.5' fill='%23333'/%3E%3Crect x='34' y='45' width='9' height='7' rx='1.5' fill='%23333'/%3E%3Crect x='46' y='45' width='8' height='7' rx='1.5' fill='%23333'/%3E%3C/svg%3E" />
+    <title>CRJ700 FMS Simulator</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="boot" class="boot">
+        <div class="boot-box">
+          <div class="boot-title">CRJ700 FMS-4200</div>
+          <div class="boot-line" id="boot-msg">SELF TEST IN PROGRESS</div>
+          <div class="boot-bar"><i id="boot-bar"></i></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

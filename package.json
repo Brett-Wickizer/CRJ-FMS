@@ -1,0 +1,29 @@
+{
+  "name": "crj700-fms",
+  "private": true,
+  "version": "1.0.0",
+  "description": "CRJ700 Collins FMS-4200 CDU simulator with live flight simulation",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "navdata": "node scripts/build-navdata.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@fontsource/b612-mono": "^5.3.0",
+    "magvar": "^2.2.0"
+  },
+  "devDependencies": {
+    "@squawk/airport-data": "^0.9.2",
+    "@squawk/airway-data": "^0.7.3",
+    "@squawk/fix-data": "^0.8.1",
+    "@squawk/navaid-data": "^0.8.2",
+    "@squawk/procedure-data": "^0.9.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}
